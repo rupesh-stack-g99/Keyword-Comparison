@@ -145,7 +145,7 @@ def parse_se_ranking_tables(pdf_file):
 
 
 def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
-    """Generates downloadable PDF document with high contrast styling."""
+    """Generates downloadable PDF document with plain status text and updated metrics."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -194,7 +194,6 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     top_1_3 = len(dataframe[(curr_numeric >= 1) & (curr_numeric <= 3)])
     top_4_10 = len(dataframe[(curr_numeric >= 4) & (curr_numeric <= 10)])
     top_11_30 = len(dataframe[(curr_numeric >= 11) & (curr_numeric <= 30)])
-    out_serp = len(dataframe[curr_numeric.isna()])
 
     valid_ranks = curr_numeric.dropna()
     avg_pos = round(valid_ranks.mean(), 1) if not valid_ranks.empty else "N/A"
@@ -205,14 +204,13 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     new_kw = len(dataframe[dataframe['Status'].str.contains("New Keyword", na=False)])
     kw_missing = len(dataframe[dataframe['Status'].str.contains("Keyword Missing", na=False)])
 
-    # Metrics Summary Table
+    # Metrics Summary Table (Adjusted to 5 columns with 'Out of SERP' removed)
     metrics_data = [
         [
             Paragraph("Total Keywords", metric_label_style),
             Paragraph("Top 1-3", metric_label_style),
             Paragraph("Top 4-10", metric_label_style),
             Paragraph("Top 11-30", metric_label_style),
-            Paragraph("Out of SERP", metric_label_style),
             Paragraph("Avg. Position", metric_label_style)
         ],
         [
@@ -220,7 +218,6 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
             Paragraph(str(top_1_3), metric_val_style),
             Paragraph(str(top_4_10), metric_val_style),
             Paragraph(str(top_11_30), metric_val_style),
-            Paragraph(str(out_serp), metric_val_style),
             Paragraph(str(avg_pos), metric_val_style)
         ],
         [
@@ -228,7 +225,6 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
             Paragraph("Dropped Positions", metric_label_style),
             Paragraph("New Keywords", metric_label_style),
             Paragraph("Keyword Missing", metric_label_style),
-            Paragraph("", metric_label_style),
             Paragraph("", metric_label_style)
         ],
         [
@@ -236,12 +232,11 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
             Paragraph(str(dropped), metric_val_style),
             Paragraph(str(new_kw), metric_val_style),
             Paragraph(str(kw_missing), metric_val_style),
-            Paragraph("", metric_label_style),
-            Paragraph("", metric_label_style)
+            Paragraph("", metric_val_style)
         ]
     ]
 
-    metrics_table = Table(metrics_data, colWidths=[95, 95, 95, 95, 95, 95])
+    metrics_table = Table(metrics_data, colWidths=[114, 114, 114, 114, 114])
     metrics_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#111827')),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -267,6 +262,7 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     ]]
 
     for _, row in dataframe.iterrows():
+        # Plain clean text status without emoji or symbols
         clean_status = str(row['Status']).replace("🆕 ", "").replace("❌ ", "").replace("🟢 ", "").replace("🔴 ", "").replace("⚪ ", "")
         
         shift_val = row['Position Shift']
@@ -368,20 +364,18 @@ if file_m1 and file_m2:
         top_1_3 = len(merged[(curr_num >= 1) & (curr_num <= 3)])
         top_4_10 = len(merged[(curr_num >= 4) & (curr_num <= 10)])
         top_11_30 = len(merged[(curr_num >= 11) & (curr_num <= 30)])
-        out_serp = len(merged[curr_num.isna()])
 
         valid_curr = curr_num.dropna()
         avg_pos = round(valid_curr.mean(), 1) if not valid_curr.empty else "N/A"
 
         st.subheader(f"SEO Performance Overview ({selected_engine})")
 
-        r1_col1, r1_col2, r1_col3, r1_col4, r1_col5, r1_col6 = st.columns(6)
+        r1_col1, r1_col2, r1_col3, r1_col4, r1_col5 = st.columns(5)
         r1_col1.metric("Total Keywords", len(merged))
         r1_col2.metric("Top 1-3", top_1_3)
         r1_col3.metric("Top 4-10", top_4_10)
         r1_col4.metric("Top 11-30", top_11_30)
-        r1_col5.metric("Out of SERP", out_serp)
-        r1_col6.metric("Avg. Position", avg_pos)
+        r1_col5.metric("Avg. Position", avg_pos)
 
         r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
         r2_col1.metric("Improved Positions", len(merged[merged['Position Shift'] > 0]))
