@@ -40,14 +40,13 @@ def extract_month_from_pdf(pdf_file):
 
 
 def parse_se_ranking_tables(pdf_file):
-    """Extracts tables directly using pdfplumber's table engine to parse Keyword and Baseline (Ranking)."""
+    """Extracts tables across all pages using pdfplumber."""
     pdf_file.seek(0)
     extracted_rows = []
     current_engine = "Google Desktop"
 
     with pdfplumber.open(pdf_file) as pdf:
-        # Loop starting from Page 3 (index 2)
-        for page_idx in range(2, len(pdf.pages)):
+        for page_idx in range(len(pdf.pages)):
             page = pdf.pages[page_idx]
 
             page_text = page.extract_text() or ""
@@ -67,20 +66,28 @@ def parse_se_ranking_tables(pdf_file):
                         continue
 
                     kw = clean_row[0]
-                    baseline_val = clean_row[2]  # Column 0 = Keyword, Column 1 = Results, Column 2 = Baseline (Ranking)
+
+                    # Find the numeric baseline/ranking value across available columns
+                    baseline_val = None
+                    for val in clean_row[1:]:
+                        if val.isdigit():
+                            baseline_val = val
+                            break
+
+                    if not baseline_val:
+                        continue
 
                     # Filter out headers and metadata
-                    if kw.lower() in ['keyword', 'results', 'baseline', ''] or 'brief rankings history' in kw.lower():
+                    if kw.lower() in ['keyword', 'results', 'baseline', 'ranking', ''] or 'brief rankings history' in kw.lower():
                         continue
                     if 'rankings overview' in kw.lower() or kw.startswith('General'):
                         continue
 
-                    if baseline_val.isdigit():
-                        extracted_rows.append({
-                            'Engine': current_engine,
-                            'Keyword': kw,
-                            'Ranking': int(baseline_val)
-                        })
+                    extracted_rows.append({
+                        'Engine': current_engine,
+                        'Keyword': kw,
+                        'Ranking': int(baseline_val)
+                    })
 
     if not extracted_rows:
         return None
@@ -91,49 +98,135 @@ def parse_se_ranking_tables(pdf_file):
 
 
 def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
-    """Generates a downloadable PDF document with custom dynamic month column headers."""
+    """Generates a downloadable PDF document with SEO Metrics Overview and dynamic headers."""
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=30, leftMargin=30, topMargin=30, bottomMargin=30)
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=20,
+        leftMargin=20,
+        topMargin=20,
+        bottomMargin=20
+    )
     story = []
 
     styles = getSampleStyleSheet()
     title_style = styles['Heading1']
 
-    # Custom Subtitle Style to avoid KeyError
     subtitle_style = ParagraphStyle(
         'ReportSubtitle',
         parent=styles['Normal'],
         fontSize=11,
         textColor=colors.HexColor('#4b5563'),
-        spaceAfter=12
+        spaceAfter=10
     )
 
+    cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontSize=8, leading=10)
+    metric_label_style = ParagraphStyle('MetricLabel', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#9ca3af'), alignment=1)
+    metric_val_style = ParagraphStyle('MetricVal', parent=styles['Normal'], fontSize=12, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
+
+    # 1. Title Section
     story.append(Paragraph(f"SE Ranking Comparison Report - {engine_name}", title_style))
     story.append(Paragraph(f"Period: {label_m1} vs {label_m2}", subtitle_style))
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 8))
 
-    # Dynamic Column Headers matching custom month labels
+    # 2. SEO Performance Overview Block Calculations
+    curr_ranks = dataframe['Curr_Ranking']
+    total_kw = len(dataframe)
+    top_1_3 = len(dataframe[(curr_ranks >= 1) & (curr_ranks <= 3)])
+    top_4_10 = len(dataframe[(curr_ranks >= 4) & (curr_ranks <= 10)])
+    top_11_30 = len(dataframe[(curr_ranks >= 11) & (curr_ranks <= 30)])
+    out_serp = len(dataframe[curr_ranks >= 100])
+    
+    ranked_kw = dataframe[curr_ranks < 100]
+    avg_pos = round(ranked_kw['Curr_Ranking'].mean(), 1) if not ranked_kw.empty else "N/A"
+
+    improved = len(dataframe[dataframe['Position Shift'] > 0])
+    dropped = len(dataframe[dataframe['Position Shift'] < 0])
+    new_kw = len(dataframe[dataframe['Status'].str.contains("New Keyword", na=False)])
+    dropped_out = out_serp
+
+    # Metrics Summary Table Layout
+    metrics_data = [
+        [
+            Paragraph("Total Keywords", metric_label_style),
+            Paragraph("Top 1-3", metric_label_style),
+            Paragraph("Top 4-10", metric_label_style),
+            Paragraph("Top 11-30", metric_label_style),
+            Paragraph("Out of SERP", metric_label_style),
+            Paragraph("Avg. Position", metric_label_style)
+        ],
+        [
+            Paragraph(str(total_kw), metric_val_style),
+            Paragraph(str(top_1_3), metric_val_style),
+            Paragraph(str(top_4_10), metric_val_style),
+            Paragraph(str(top_11_30), metric_val_style),
+            Paragraph(str(out_serp), metric_val_style),
+            Paragraph(str(avg_pos), metric_val_style)
+        ],
+        [
+            Paragraph("Improved Positions", metric_label_style),
+            Paragraph("Dropped Positions", metric_label_style),
+            Paragraph("New Keywords", metric_label_style),
+            Paragraph("Dropped Out (>100)", metric_label_style),
+            Paragraph("", metric_label_style),
+            Paragraph("", metric_label_style)
+        ],
+        [
+            Paragraph(str(improved), metric_val_style),
+            Paragraph(str(dropped), metric_val_style),
+            Paragraph(str(new_kw), metric_val_style),
+            Paragraph(str(dropped_out), metric_val_style),
+            Paragraph("", metric_label_style),
+            Paragraph("", metric_label_style)
+        ]
+    ]
+
+    metrics_table = Table(metrics_data, colWidths=[95, 95, 95, 95, 95, 95])
+    metrics_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#111827')),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#1f2937')),
+    ]))
+
+    story.append(metrics_table)
+    story.append(Spacer(1, 14))
+
+    # 3. Main Keyword Comparison Table
     m1_header = f"{label_m1} Rank" if "Rank" not in label_m1 else label_m1
     m2_header = f"{label_m2} Rank" if "Rank" not in label_m2 else label_m2
 
-    table_data = [["Keyword", m1_header, m2_header, "Shift", "Status"]]
+    table_data = [[
+        Paragraph("<b>Keyword</b>", cell_style),
+        Paragraph(f"<b>{m1_header}</b>", cell_style),
+        Paragraph(f"<b>{m2_header}</b>", cell_style),
+        Paragraph("<b>Shift</b>", cell_style),
+        Paragraph("<b>Status</b>", cell_style)
+    ]]
+
     for _, row in dataframe.iterrows():
+        clean_status = str(row['Status']).replace("🆕 ", "").replace("❌ ", "").replace("🟢 ", "").replace("🔴 ", "").replace("⚪ ", "")
+        shift_str = f"+{row['Position Shift']}" if row['Position Shift'] > 0 else str(row['Position Shift'])
+        
         table_data.append([
-            str(row['Keyword'])[:40],  # Truncate long keywords for clean layout
-            str(row['Prev_Ranking']),
-            str(row['Curr_Ranking']),
-            f"{'+' if row['Position Shift'] > 0 else ''}{row['Position Shift']}",
-            str(row['Status']).replace("🆕 ", "").replace("❌ ", "").replace("🟢 ", "").replace("🔴 ", "").replace("⚪ ", "")
+            Paragraph(str(row['Keyword']), cell_style),
+            Paragraph(str(row['Prev_Ranking']), cell_style),
+            Paragraph(str(row['Curr_Ranking']), cell_style),
+            Paragraph(shift_str, cell_style),
+            Paragraph(clean_status, cell_style)
         ])
 
-    pdf_table = Table(table_data, colWidths=[240, 70, 70, 50, 100])
+    pdf_table = Table(table_data, colWidths=[260, 70, 70, 50, 100], repeatRows=1)
     pdf_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f2937')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+        ('ALIGN', (1, 0), (-1, -1), 'LEFT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#d1d5db')),
     ]))
 
@@ -144,7 +237,6 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
 
 
 if file_m1 and file_m2:
-    # Auto-detect months or fall back to Month 1 / Month 2
     detected_m1 = extract_month_from_pdf(file_m1) or "Month 1"
     detected_m2 = extract_month_from_pdf(file_m2) or "Month 2"
 
@@ -160,17 +252,14 @@ if file_m1 and file_m2:
         available_engines = list(set(df_m1['Engine'].unique()).union(set(df_m2['Engine'].unique())))
         selected_engine = st.selectbox("Select Engine / Device:", available_engines)
 
-        # Dynamic Subsets
         m1_sub = df_m1[df_m1['Engine'] == selected_engine][['Keyword', 'Ranking']].rename(columns={'Ranking': 'Prev_Ranking'})
         m2_sub = df_m2[df_m2['Engine'] == selected_engine][['Keyword', 'Ranking']].rename(columns={'Ranking': 'Curr_Ranking'})
 
-        # Outer Merge
         merged = pd.merge(m1_sub, m2_sub, on='Keyword', how='outer')
 
         merged['Prev_Ranking'] = merged['Prev_Ranking'].fillna(100).astype(int)
         merged['Curr_Ranking'] = merged['Curr_Ranking'].fillna(100).astype(int)
 
-        # Position Shift Calculation
         merged['Position Shift'] = merged['Prev_Ranking'] - merged['Curr_Ranking']
 
         def get_status(row):
@@ -187,7 +276,6 @@ if file_m1 and file_m2:
 
         merged['Status'] = merged.apply(get_status, axis=1)
 
-        # SEO Ranking Metrics
         curr_ranks = merged['Curr_Ranking']
         top_1_3 = len(merged[(curr_ranks >= 1) & (curr_ranks <= 3)])
         top_4_10 = len(merged[(curr_ranks >= 4) & (curr_ranks <= 10)])
@@ -199,7 +287,6 @@ if file_m1 and file_m2:
 
         st.subheader(f"SEO Performance Overview ({selected_engine})")
 
-        # Metric Overview Cards
         r1_col1, r1_col2, r1_col3, r1_col4, r1_col5, r1_col6 = st.columns(6)
         r1_col1.metric("Total Keywords", len(merged))
         r1_col2.metric("Top 1-3", top_1_3)
@@ -216,20 +303,16 @@ if file_m1 and file_m2:
 
         st.markdown("---")
 
-        # Filters & Sorting
         status_filter = st.multiselect("Filter by Status:", merged['Status'].unique(), default=merged['Status'].unique())
         filtered_df = merged[merged['Status'].isin(status_filter)].sort_values(by='Position Shift', ascending=False)
 
-        # Rename Dataframe Display Headers to match custom month labels
         display_df = filtered_df.rename(columns={
             'Prev_Ranking': label_m1,
             'Curr_Ranking': label_m2
         })
 
-        # Fix Index to start from 1 instead of 0
         display_df.index = range(1, len(display_df) + 1)
 
-        # Header with PDF Download Button
         head_col1, head_col2 = st.columns([4, 1])
         head_col1.subheader("Keyword Comparison Data")
 
