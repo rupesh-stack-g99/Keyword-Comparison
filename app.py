@@ -40,29 +40,27 @@ def extract_month_from_pdf(pdf_file):
 
 
 def clean_rank_value(val_str):
-    """Cleans raw PDF text into a valid rank integer (1-100). Returns 100 if unranked/out of SERP."""
+    """Cleans raw PDF text into a valid rank string. Returns '' if unranked/missing."""
     if not val_str:
-        return 100
+        return ""
     
-    # Strip whitespace and common noise symbols
     val = re.sub(r'[^\d\->]', '', str(val_str)).strip()
     
     if not val or val == '-' or '>' in val:
-        return 100
+        return ""
     
     if val.isdigit():
         num = int(val)
-        # SE Ranking positions only go up to 100 on SERP. Values larger than 100 are total results or search volume.
         if 1 <= num <= 100:
-            return num
+            return str(num)
         else:
-            return 100
+            return ""
             
-    return 100
+    return ""
 
 
 def parse_se_ranking_tables(pdf_file):
-    """Extracts tables across all pages using pdfplumber with strict column position targeted extraction."""
+    """Extracts tables across all pages using pdfplumber."""
     pdf_file.seek(0)
     extracted_rows = []
     current_engine = "Google Desktop"
@@ -89,30 +87,25 @@ def parse_se_ranking_tables(pdf_file):
 
                     kw = clean_row[0]
 
-                    # Ignore headers and summary blocks
+                    # Ignore headers and metadata
                     if kw.lower() in ['keyword', 'results', 'baseline', 'ranking', ''] or 'brief rankings history' in kw.lower():
                         continue
                     if 'rankings overview' in kw.lower() or kw.startswith('General'):
                         continue
 
-                    # SE Ranking exports usually have Rank in column index 2 or 3.
-                    # We evaluate potential columns to extract genuine SERP positions (1-100).
-                    rank_val = 100
-                    
-                    # Try candidate columns sequentially (Index 2, then 3, then 1)
+                    rank_val = ""
                     for col_idx in [2, 3, 1]:
                         if col_idx < len(clean_row):
                             potential_val = clean_row[col_idx]
                             parsed_rank = clean_rank_value(potential_val)
-                            # If a valid SERP position (1-100) is found, use it
-                            if parsed_rank < 100 or potential_val in ['100', '>100', '-']:
+                            if parsed_rank != "":
                                 rank_val = parsed_rank
                                 break
 
                     extracted_rows.append({
                         'Engine': current_engine,
                         'Keyword': kw,
-                        'Ranking': int(rank_val)
+                        'Ranking': rank_val
                     })
 
     if not extracted_rows:
@@ -124,7 +117,7 @@ def parse_se_ranking_tables(pdf_file):
 
 
 def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
-    """Generates a downloadable PDF document with SEO Metrics Overview and dynamic headers."""
+    """Generates downloadable PDF document leaving unranked/missing items as blank."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -156,23 +149,26 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     story.append(Paragraph(f"Period: {label_m1} vs {label_m2}", subtitle_style))
     story.append(Spacer(1, 8))
 
-    # SEO Performance Overview Calculations
-    curr_ranks = dataframe['Curr_Ranking']
+    # Calculate Overview Metrics safely with coerced numeric ranks
+    curr_numeric = pd.to_numeric(dataframe['Curr_Ranking'], errors='coerce')
+    prev_numeric = pd.to_numeric(dataframe['Prev_Ranking'], errors='coerce')
+
     total_kw = len(dataframe)
-    top_1_3 = len(dataframe[(curr_ranks >= 1) & (curr_ranks <= 3)])
-    top_4_10 = len(dataframe[(curr_ranks >= 4) & (curr_ranks <= 10)])
-    top_11_30 = len(dataframe[(curr_ranks >= 11) & (curr_ranks <= 30)])
-    out_serp = len(dataframe[curr_ranks >= 100])
-    
-    ranked_kw = dataframe[curr_ranks < 100]
-    avg_pos = round(ranked_kw['Curr_Ranking'].mean(), 1) if not ranked_kw.empty else "N/A"
+    top_1_3 = len(dataframe[(curr_numeric >= 1) & (curr_numeric <= 3)])
+    top_4_10 = len(dataframe[(curr_numeric >= 4) & (curr_numeric <= 10)])
+    top_11_30 = len(dataframe[(curr_numeric >= 11) & (curr_numeric <= 30)])
+    out_serp = len(dataframe[curr_numeric.isna()])
 
-    improved = len(dataframe[dataframe['Position Shift'] > 0])
-    dropped = len(dataframe[dataframe['Position Shift'] < 0])
+    valid_ranks = curr_numeric.dropna()
+    avg_pos = round(valid_ranks.mean(), 1) if not valid_ranks.empty else "N/A"
+
+    shifts = dataframe['Position Shift']
+    improved = len(dataframe[shifts > 0])
+    dropped = len(dataframe[shifts < 0])
     new_kw = len(dataframe[dataframe['Status'].str.contains("New Keyword", na=False)])
-    dropped_out = out_serp
+    dropped_out = len(dataframe[dataframe['Status'].str.contains("Dropped Out", na=False)])
 
-    # Metrics Summary Table Layout
+    # Metrics Summary Table
     metrics_data = [
         [
             Paragraph("Total Keywords", metric_label_style),
@@ -221,7 +217,7 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     story.append(metrics_table)
     story.append(Spacer(1, 14))
 
-    # Keyword Data Table
+    # Keyword Comparison Table
     m1_header = f"{label_m1} Rank" if "Rank" not in label_m1 else label_m1
     m2_header = f"{label_m2} Rank" if "Rank" not in label_m2 else label_m2
 
@@ -235,8 +231,14 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
 
     for _, row in dataframe.iterrows():
         clean_status = str(row['Status']).replace("🆕 ", "").replace("❌ ", "").replace("🟢 ", "").replace("🔴 ", "").replace("⚪ ", "")
-        shift_str = f"+{row['Position Shift']}" if row['Position Shift'] > 0 else str(row['Position Shift'])
         
+        shift_val = row['Position Shift']
+        if pd.isna(shift_val) or shift_val == "":
+            shift_str = ""
+        else:
+            shift_num = int(shift_val)
+            shift_str = f"+{shift_num}" if shift_num > 0 else str(shift_num)
+
         table_data.append([
             Paragraph(str(row['Keyword']), cell_style),
             Paragraph(str(row['Prev_Ranking']), cell_style),
@@ -283,33 +285,56 @@ if file_m1 and file_m2:
 
         merged = pd.merge(m1_sub, m2_sub, on='Keyword', how='outer')
 
-        merged['Prev_Ranking'] = merged['Prev_Ranking'].fillna(100).astype(int)
-        merged['Curr_Ranking'] = merged['Curr_Ranking'].fillna(100).astype(int)
+        # Fill missing keyword occurrences with empty strings
+        merged['Prev_Ranking'] = merged['Prev_Ranking'].fillna("")
+        merged['Curr_Ranking'] = merged['Curr_Ranking'].fillna("")
 
-        merged['Position Shift'] = merged['Prev_Ranking'] - merged['Curr_Ranking']
+        # Create numeric representations purely for calculation purposes
+        prev_num = pd.to_numeric(merged['Prev_Ranking'], errors='coerce')
+        curr_num = pd.to_numeric(merged['Curr_Ranking'], errors='coerce')
+
+        # Calculate position shifts dynamically
+        def calc_shift(row):
+            p = row['prev_num']
+            c = row['curr_num']
+            if pd.notna(p) and pd.notna(c):
+                return int(p - c)
+            return None
+
+        temp_calc = pd.DataFrame({'prev_num': prev_num, 'curr_num': curr_num})
+        merged['Position Shift'] = temp_calc.apply(calc_shift, axis=1)
 
         def get_status(row):
-            if row['Prev_Ranking'] == 100 and row['Curr_Ranking'] < 100:
+            p = row['prev_num']
+            c = row['curr_num']
+            
+            if pd.isna(p) and pd.notna(c):
                 return "🆕 New Keyword"
-            elif row['Prev_Ranking'] < 100 and row['Curr_Ranking'] == 100:
+            elif pd.notna(p) and pd.isna(c):
                 return "❌ Dropped Out (>100)"
-            elif row['Position Shift'] > 0:
-                return "🟢 Improved"
-            elif row['Position Shift'] < 0:
-                return "🔴 Dropped"
+            elif pd.notna(p) and pd.notna(c):
+                shift = p - c
+                if shift > 0:
+                    return "🟢 Improved"
+                elif shift < 0:
+                    return "🔴 Dropped"
+                else:
+                    return "⚪ No Change"
             else:
-                return "⚪ No Change"
+                return "⚪ No Data"
 
-        merged['Status'] = merged.apply(get_status, axis=1)
+        temp_calc['prev_num'] = prev_num
+        temp_calc['curr_num'] = curr_num
+        merged['Status'] = temp_calc.apply(get_status, axis=1)
 
-        curr_ranks = merged['Curr_Ranking']
-        top_1_3 = len(merged[(curr_ranks >= 1) & (curr_ranks <= 3)])
-        top_4_10 = len(merged[(curr_ranks >= 4) & (curr_ranks <= 10)])
-        top_11_30 = len(merged[(curr_ranks >= 11) & (curr_ranks <= 30)])
-        out_serp = len(merged[curr_ranks >= 100])
+        # Overview Calculations
+        top_1_3 = len(merged[(curr_num >= 1) & (curr_num <= 3)])
+        top_4_10 = len(merged[(curr_num >= 4) & (curr_num <= 10)])
+        top_11_30 = len(merged[(curr_num >= 11) & (curr_num <= 30)])
+        out_serp = len(merged[curr_num.isna()])
 
-        ranked_keywords = merged[curr_ranks < 100]
-        avg_pos = round(ranked_keywords['Curr_Ranking'].mean(), 1) if not ranked_keywords.empty else "N/A"
+        valid_curr = curr_num.dropna()
+        avg_pos = round(valid_curr.mean(), 1) if not valid_curr.empty else "N/A"
 
         st.subheader(f"SEO Performance Overview ({selected_engine})")
 
@@ -325,12 +350,16 @@ if file_m1 and file_m2:
         r2_col1.metric("Improved Positions", len(merged[merged['Position Shift'] > 0]))
         r2_col2.metric("Dropped Positions", len(merged[merged['Position Shift'] < 0]))
         r2_col3.metric("New Keywords", len(merged[merged['Status'] == "🆕 New Keyword"]))
-        r2_col4.metric("Dropped Out (>100)", out_serp)
+        r2_col4.metric("Dropped Out (>100)", len(merged[merged['Status'] == "❌ Dropped Out (>100)"]))
 
         st.markdown("---")
 
         status_filter = st.multiselect("Filter by Status:", merged['Status'].unique(), default=merged['Status'].unique())
-        filtered_df = merged[merged['Status'].isin(status_filter)].sort_values(by='Position Shift', ascending=False)
+        filtered_df = merged[merged['Status'].isin(status_filter)].copy()
+        
+        # Sort values putting valid position shifts on top
+        filtered_df['sort_helper'] = filtered_df['Position Shift'].fillna(-999)
+        filtered_df = filtered_df.sort_values(by='sort_helper', ascending=False).drop(columns=['sort_helper'])
 
         display_df = filtered_df.rename(columns={
             'Prev_Ranking': label_m1,
