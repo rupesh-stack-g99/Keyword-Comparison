@@ -13,7 +13,7 @@ from reportlab.lib import colors
 from svglib.svglib import svg2rlg
 
 # ----------------------------------------------------
-# 📌 CONFIGURATION: Growth99 Fixed SVG Logo URL
+# 📌 CONFIGURATION: Growth99 Fixed SVG Logo URL (LINE 16)
 # ----------------------------------------------------
 FIXED_LOGO_PATH = "https://growth99.com/storage/2024/09/LOGO.svg"
 
@@ -231,8 +231,11 @@ def generate_pdf_report(dataframe, project_name, project_url, engine_name, label
     metric_label_style = ParagraphStyle('MetricLabel', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#9ca3af'), alignment=1)
     metric_val_style = ParagraphStyle('MetricVal', parent=styles['Normal'], fontSize=12, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
 
+    # Clean engine name to remove "Google" prefix for header title
+    clean_engine_name = re.sub(r'(?i)\bgoogle\b\s*', '', engine_name).strip()
+
     # Header Construction: Title/Subtitle on Left, Fixed SVG Logo on Right
-    title_text = f"Keyword Ranking Comparison Report - {engine_name}"
+    title_text = f"Keyword Ranking Comparison Report - {clean_engine_name}"
     subtitle_text = (
         f"<b>Project Name:</b> {project_name}<br/>"
         f"<b>Project URL:</b> {project_url}<br/>"
