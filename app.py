@@ -11,18 +11,28 @@ from reportlab.lib import colors
 # Page Configuration
 st.set_page_config(page_title="SE Ranking Comparison Tool", layout="wide")
 
-# Injecting CSS for Theme-Adaptive Metric Card Colors
+# Inject CSS for seamless Theme-Adaptive UI (Light & Dark Theme Compatible)
 st.markdown("""
     <style>
-        /* Ensures metric containers adjust adaptively to both Light and Dark themes */
-        [data-testid="stMetricValue"] {
-            font-size: 1.6rem !important;
-        }
+        /* Card styling using Streamlit CSS variables for perfect light/dark theme contrast */
         div[data-testid="stMetric"] {
-            border-radius: 8px;
-            padding: 10px 15px;
-            background-color: rgba(150, 150, 150, 0.1);
-            border: 1px solid rgba(150, 150, 150, 0.2);
+            background-color: var(--secondary-background-color);
+            border: 1px solid rgba(128, 128, 128, 0.2);
+            border-radius: 10px;
+            padding: 12px 16px;
+            box-shadow: 0px 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        
+        [data-testid="stMetricLabel"] {
+            color: var(--text-color) !important;
+            opacity: 0.8;
+            font-weight: 500;
+        }
+
+        [data-testid="stMetricValue"] {
+            color: var(--text-color) !important;
+            font-size: 1.6rem !important;
+            font-weight: 700;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -160,7 +170,7 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
 
     cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.black)
     
-    # White text style for table headers in PDF
+    # Header cell style explicitly set to white text
     header_cell_style = ParagraphStyle(
         'HeaderCell',
         parent=styles['Normal'],
@@ -413,7 +423,6 @@ if file_m1 and file_m2:
             mime="application/pdf"
         )
 
-        # Outputting standard dataframe automatically handles light/dark theme contrast
         st.dataframe(display_df, use_container_width=True)
     else:
         st.error("Could not find table data in the uploaded PDFs. Please check that both files contain the Brief Rankings History table.")
