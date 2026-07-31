@@ -204,7 +204,7 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     new_kw = len(dataframe[dataframe['Status'].str.contains("New Keyword", na=False)])
     kw_missing = len(dataframe[dataframe['Status'].str.contains("Keyword Missing", na=False)])
 
-    # Metrics Summary Table (Adjusted to 5 columns with 'Out of SERP' removed)
+    # Metrics Summary Table
     metrics_data = [
         [
             Paragraph("Total Keywords", metric_label_style),
@@ -360,33 +360,47 @@ if file_m1 and file_m2:
         temp_calc['curr_num'] = curr_num
         merged['Status'] = temp_calc.apply(get_status, axis=1)
 
-        # Overview Calculations
-        top_1_3 = len(merged[(curr_num >= 1) & (curr_num <= 3)])
-        top_4_10 = len(merged[(curr_num >= 4) & (curr_num <= 10)])
-        top_11_30 = len(merged[(curr_num >= 11) & (curr_num <= 30)])
+        # Filters Section
+        filter_col1, filter_col2 = st.columns([1, 2])
 
-        valid_curr = curr_num.dropna()
+        with filter_col1:
+            status_filter = st.multiselect("Filter by Status:", merged['Status'].unique(), default=merged['Status'].unique())
+
+        with filter_col2:
+            # Method 2: Multiselect to remove specific keywords from data
+            keywords_to_remove = st.multiselect("🗑️ Select Keywords to Remove/Delete:", merged['Keyword'].unique())
+
+        # Apply Filters (Status + Keyword Removal)
+        filtered_df = merged[
+            (merged['Status'].isin(status_filter)) & 
+            (~merged['Keyword'].isin(keywords_to_remove))
+        ].copy()
+
+        # Recalculate Overview Metrics based on filtered dataset
+        curr_num_filtered = pd.to_numeric(filtered_df['Curr_Ranking'], errors='coerce')
+        top_1_3 = len(filtered_df[(curr_num_filtered >= 1) & (curr_num_filtered <= 3)])
+        top_4_10 = len(filtered_df[(curr_num_filtered >= 4) & (curr_num_filtered <= 10)])
+        top_11_30 = len(filtered_df[(curr_num_filtered >= 11) & (curr_num_filtered <= 30)])
+
+        valid_curr = curr_num_filtered.dropna()
         avg_pos = round(valid_curr.mean(), 1) if not valid_curr.empty else "N/A"
 
         st.subheader(f"SEO Performance Overview ({selected_engine})")
 
         r1_col1, r1_col2, r1_col3, r1_col4, r1_col5 = st.columns(5)
-        r1_col1.metric("Total Keywords", len(merged))
+        r1_col1.metric("Total Keywords", len(filtered_df))
         r1_col2.metric("Top 1-3", top_1_3)
         r1_col3.metric("Top 4-10", top_4_10)
         r1_col4.metric("Top 11-30", top_11_30)
         r1_col5.metric("Avg. Position", avg_pos)
 
         r2_col1, r2_col2, r2_col3, r2_col4 = st.columns(4)
-        r2_col1.metric("Improved Positions", len(merged[merged['Position Shift'] > 0]))
-        r2_col2.metric("Dropped Positions", len(merged[merged['Position Shift'] < 0]))
-        r2_col3.metric("New Keywords", len(merged[merged['Status'] == "🆕 New Keyword"]))
-        r2_col4.metric("Keyword Missing", len(merged[merged['Status'] == "❌ Keyword Missing"]))
+        r2_col1.metric("Improved Positions", len(filtered_df[filtered_df['Position Shift'] > 0]))
+        r2_col2.metric("Dropped Positions", len(filtered_df[filtered_df['Position Shift'] < 0]))
+        r2_col3.metric("New Keywords", len(filtered_df[filtered_df['Status'] == "🆕 New Keyword"]))
+        r2_col4.metric("Keyword Missing", len(filtered_df[filtered_df['Status'] == "❌ Keyword Missing"]))
 
         st.markdown("---")
-
-        status_filter = st.multiselect("Filter by Status:", merged['Status'].unique(), default=merged['Status'].unique())
-        filtered_df = merged[merged['Status'].isin(status_filter)].copy()
         
         filtered_df['Position Shift Display'] = filtered_df['Position Shift'].apply(
             lambda x: "-" if pd.isna(x) or x == "" else (f"+{int(x)}" if int(x) > 0 else str(int(x)))
