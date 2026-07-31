@@ -40,23 +40,23 @@ def extract_month_from_pdf(pdf_file):
 
 
 def clean_rank_value(val_str):
-    """Cleans raw PDF text into a valid rank string. Returns '' if unranked/missing."""
+    """Cleans raw PDF text into a valid rank string. Returns '-' if unranked/missing."""
     if not val_str:
-        return ""
+        return "-"
     
     val = re.sub(r'[^\d\->]', '', str(val_str)).strip()
     
     if not val or val == '-' or '>' in val:
-        return ""
+        return "-"
     
     if val.isdigit():
         num = int(val)
         if 1 <= num <= 100:
             return str(num)
         else:
-            return ""
+            return "-"
             
-    return ""
+    return "-"
 
 
 def parse_se_ranking_tables(pdf_file):
@@ -87,18 +87,19 @@ def parse_se_ranking_tables(pdf_file):
 
                     kw = clean_row[0]
 
-                    # Ignore headers and metadata
-                    if kw.lower() in ['keyword', 'results', 'baseline', 'ranking', ''] or 'brief rankings history' in kw.lower():
+                    # Filter out headers, summary blocks, and "100% Keywords in SERPs" text
+                    kw_lower = kw.lower()
+                    if kw_lower in ['keyword', 'results', 'baseline', 'ranking', ''] or 'brief rankings history' in kw_lower:
                         continue
-                    if 'rankings overview' in kw.lower() or kw.startswith('General'):
+                    if 'rankings overview' in kw_lower or kw.startswith('General') or 'keywords in serp' in kw_lower:
                         continue
 
-                    rank_val = ""
+                    rank_val = "-"
                     for col_idx in [2, 3, 1]:
                         if col_idx < len(clean_row):
                             potential_val = clean_row[col_idx]
                             parsed_rank = clean_rank_value(potential_val)
-                            if parsed_rank != "":
+                            if parsed_rank != "-":
                                 rank_val = parsed_rank
                                 break
 
@@ -117,7 +118,7 @@ def parse_se_ranking_tables(pdf_file):
 
 
 def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
-    """Generates downloadable PDF document leaving unranked/missing items as blank."""
+    """Generates downloadable PDF document using dashes for unranked/missing items."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -234,15 +235,18 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
         
         shift_val = row['Position Shift']
         if pd.isna(shift_val) or shift_val == "":
-            shift_str = ""
+            shift_str = "-"
         else:
             shift_num = int(shift_val)
             shift_str = f"+{shift_num}" if shift_num > 0 else str(shift_num)
 
+        prev_rank_str = str(row['Prev_Ranking']) if str(row['Prev_Ranking']) != "" else "-"
+        curr_rank_str = str(row['Curr_Ranking']) if str(row['Curr_Ranking']) != "" else "-"
+
         table_data.append([
             Paragraph(str(row['Keyword']), cell_style),
-            Paragraph(str(row['Prev_Ranking']), cell_style),
-            Paragraph(str(row['Curr_Ranking']), cell_style),
+            Paragraph(prev_rank_str, cell_style),
+            Paragraph(curr_rank_str, cell_style),
             Paragraph(shift_str, cell_style),
             Paragraph(clean_status, cell_style)
         ])
@@ -285,9 +289,9 @@ if file_m1 and file_m2:
 
         merged = pd.merge(m1_sub, m2_sub, on='Keyword', how='outer')
 
-        # Fill missing keyword occurrences with empty strings
-        merged['Prev_Ranking'] = merged['Prev_Ranking'].fillna("")
-        merged['Curr_Ranking'] = merged['Curr_Ranking'].fillna("")
+        # Fill missing keyword occurrences with '-'
+        merged['Prev_Ranking'] = merged['Prev_Ranking'].fillna("-")
+        merged['Curr_Ranking'] = merged['Curr_Ranking'].fillna("-")
 
         # Create numeric representations purely for calculation purposes
         prev_num = pd.to_numeric(merged['Prev_Ranking'], errors='coerce')
@@ -357,11 +361,20 @@ if file_m1 and file_m2:
         status_filter = st.multiselect("Filter by Status:", merged['Status'].unique(), default=merged['Status'].unique())
         filtered_df = merged[merged['Status'].isin(status_filter)].copy()
         
+        # Format Position Shift display column with dashes for unranked items
+        filtered_df['Position Shift Display'] = filtered_df['Position Shift'].apply(
+            lambda x: "-" if pd.isna(x) or x == "" else (f"+{int(x)}" if int(x) > 0 else str(int(x)))
+        )
+
         # Sort values putting valid position shifts on top
         filtered_df['sort_helper'] = filtered_df['Position Shift'].fillna(-999)
         filtered_df = filtered_df.sort_values(by='sort_helper', ascending=False).drop(columns=['sort_helper'])
 
-        display_df = filtered_df.rename(columns={
+        display_df = filtered_df.copy()
+        display_df['Position Shift'] = display_df['Position Shift Display']
+        display_df = display_df.drop(columns=['Position Shift Display'])
+
+        display_df = display_df.rename(columns={
             'Prev_Ranking': label_m1,
             'Curr_Ranking': label_m2
         })
