@@ -39,8 +39,30 @@ def extract_month_from_pdf(pdf_file):
     return None
 
 
+def clean_rank_value(val_str):
+    """Cleans raw PDF text into a valid rank integer (1-100). Returns 100 if unranked/out of SERP."""
+    if not val_str:
+        return 100
+    
+    # Strip whitespace and common noise symbols
+    val = re.sub(r'[^\d\->]', '', str(val_str)).strip()
+    
+    if not val or val == '-' or '>' in val:
+        return 100
+    
+    if val.isdigit():
+        num = int(val)
+        # SE Ranking positions only go up to 100 on SERP. Values larger than 100 are total results or search volume.
+        if 1 <= num <= 100:
+            return num
+        else:
+            return 100
+            
+    return 100
+
+
 def parse_se_ranking_tables(pdf_file):
-    """Extracts tables across all pages using pdfplumber."""
+    """Extracts tables across all pages using pdfplumber with strict column position targeted extraction."""
     pdf_file.seek(0)
     extracted_rows = []
     current_engine = "Google Desktop"
@@ -67,26 +89,30 @@ def parse_se_ranking_tables(pdf_file):
 
                     kw = clean_row[0]
 
-                    # Find the numeric baseline/ranking value across available columns
-                    baseline_val = None
-                    for val in clean_row[1:]:
-                        if val.isdigit():
-                            baseline_val = val
-                            break
-
-                    if not baseline_val:
-                        continue
-
-                    # Filter out headers and metadata
+                    # Ignore headers and summary blocks
                     if kw.lower() in ['keyword', 'results', 'baseline', 'ranking', ''] or 'brief rankings history' in kw.lower():
                         continue
                     if 'rankings overview' in kw.lower() or kw.startswith('General'):
                         continue
 
+                    # SE Ranking exports usually have Rank in column index 2 or 3.
+                    # We evaluate potential columns to extract genuine SERP positions (1-100).
+                    rank_val = 100
+                    
+                    # Try candidate columns sequentially (Index 2, then 3, then 1)
+                    for col_idx in [2, 3, 1]:
+                        if col_idx < len(clean_row):
+                            potential_val = clean_row[col_idx]
+                            parsed_rank = clean_rank_value(potential_val)
+                            # If a valid SERP position (1-100) is found, use it
+                            if parsed_rank < 100 or potential_val in ['100', '>100', '-']:
+                                rank_val = parsed_rank
+                                break
+
                     extracted_rows.append({
                         'Engine': current_engine,
                         'Keyword': kw,
-                        'Ranking': int(baseline_val)
+                        'Ranking': int(rank_val)
                     })
 
     if not extracted_rows:
@@ -125,12 +151,12 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     metric_label_style = ParagraphStyle('MetricLabel', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#9ca3af'), alignment=1)
     metric_val_style = ParagraphStyle('MetricVal', parent=styles['Normal'], fontSize=12, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
 
-    # 1. Title Section
+    # Title Section
     story.append(Paragraph(f"SE Ranking Comparison Report - {engine_name}", title_style))
     story.append(Paragraph(f"Period: {label_m1} vs {label_m2}", subtitle_style))
     story.append(Spacer(1, 8))
 
-    # 2. SEO Performance Overview Block Calculations
+    # SEO Performance Overview Calculations
     curr_ranks = dataframe['Curr_Ranking']
     total_kw = len(dataframe)
     top_1_3 = len(dataframe[(curr_ranks >= 1) & (curr_ranks <= 3)])
@@ -195,7 +221,7 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     story.append(metrics_table)
     story.append(Spacer(1, 14))
 
-    # 3. Main Keyword Comparison Table
+    # Keyword Data Table
     m1_header = f"{label_m1} Rank" if "Rank" not in label_m1 else label_m1
     m2_header = f"{label_m2} Rank" if "Rank" not in label_m2 else label_m2
 
