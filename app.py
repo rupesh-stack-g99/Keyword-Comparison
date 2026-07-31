@@ -3,6 +3,7 @@ import pandas as pd
 import pdfplumber
 import io
 import re
+from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -431,11 +432,21 @@ if file_m1 and file_m2:
         head_col1, head_col2 = st.columns([4, 1])
         head_col1.subheader("Keyword Comparison Data")
 
+        # Constructing dynamic, clean file name elements
+        clean_project = re.sub(r'[^\w\s-]', '', project_name).strip().replace(' ', '_')
+        clean_m1 = re.sub(r'[^\w\s-]', '', label_m1).strip().replace(' ', '_')
+        clean_m2 = re.sub(r'[^\w\s-]', '', label_m2).strip().replace(' ', '_')
+        clean_engine = re.sub(r'[^\w\s-]', '', selected_engine).strip().replace(' ', '_')
+        current_date = datetime.today().strftime('%Y-%m-%d')
+
+        dynamic_filename = f"{clean_project}_{clean_m1}_vs_{clean_m2}_{clean_engine}_{current_date}.pdf"
+
         pdf_bytes = generate_pdf_report(filtered_df, project_name, project_url, selected_engine, label_m1, label_m2)
+        
         head_col2.download_button(
             label="📥 Download PDF Report",
             data=pdf_bytes,
-            file_name=f"{project_name.replace(' ', '_')}_Keyword_Ranking_{selected_engine}.pdf",
+            file_name=dynamic_filename,
             mime="application/pdf"
         )
 
