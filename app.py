@@ -182,8 +182,8 @@ def generate_pdf_report(dataframe, project_name, engine_name, label_m1, label_m2
     metric_label_style = ParagraphStyle('MetricLabel', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#9ca3af'), alignment=1)
     metric_val_style = ParagraphStyle('MetricVal', parent=styles['Normal'], fontSize=12, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
 
-    # Title & Project Section
-    story.append(Paragraph(f"SE Ranking Comparison Report - {engine_name}", title_style))
+    # Title & Project Section (Updated Heading)
+    story.append(Paragraph(f"Keyword Ranking Comparison Report - {engine_name}", title_style))
     story.append(Paragraph(f"<b>Project Name:</b> {project_name} | <b>Period:</b> {label_m1} vs {label_m2}", subtitle_style))
     story.append(Spacer(1, 8))
 
@@ -428,7 +428,7 @@ if file_m1 and file_m2:
         head_col2.download_button(
             label="📥 Download PDF Report",
             data=pdf_bytes,
-            file_name=f"{project_name.replace(' ', '_')}_SE_Ranking_{selected_engine}.pdf",
+            file_name=f"{project_name.replace(' ', '_')}_Keyword_Ranking_{selected_engine}.pdf",
             mime="application/pdf"
         )
 
