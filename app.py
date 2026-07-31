@@ -144,8 +144,8 @@ def parse_se_ranking_tables(pdf_file):
     return df
 
 
-def generate_pdf_report(dataframe, project_name, engine_name, label_m1, label_m2):
-    """Generates downloadable PDF document with project name, plain status text, and updated metrics."""
+def generate_pdf_report(dataframe, project_name, project_url, engine_name, label_m1, label_m2):
+    """Generates downloadable PDF document with project name, project url, plain status text, and updated metrics."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -163,7 +163,8 @@ def generate_pdf_report(dataframe, project_name, engine_name, label_m1, label_m2
     subtitle_style = ParagraphStyle(
         'ReportSubtitle',
         parent=styles['Normal'],
-        fontSize=11,
+        fontSize=10,
+        leading=14,
         textColor=colors.HexColor('#4b5563'),
         spaceAfter=10
     )
@@ -182,9 +183,14 @@ def generate_pdf_report(dataframe, project_name, engine_name, label_m1, label_m2
     metric_label_style = ParagraphStyle('MetricLabel', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#9ca3af'), alignment=1)
     metric_val_style = ParagraphStyle('MetricVal', parent=styles['Normal'], fontSize=12, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
 
-    # Title & Project Section (Updated Heading)
+    # Title & Subtitle with Project Name, Project URL, and Period
     story.append(Paragraph(f"Keyword Ranking Comparison Report - {engine_name}", title_style))
-    story.append(Paragraph(f"<b>Project Name:</b> {project_name} | <b>Period:</b> {label_m1} vs {label_m2}", subtitle_style))
+    story.append(Paragraph(
+        f"<b>Project Name:</b> {project_name}<br/>"
+        f"<b>Project URL:</b> {project_url}<br/>"
+        f"<b>Period:</b> {label_m1} vs {label_m2}", 
+        subtitle_style
+    ))
     story.append(Spacer(1, 8))
 
     # Calculate Overview Metrics
@@ -306,6 +312,7 @@ if file_m1 and file_m2:
 
     st.sidebar.subheader("⚙️ Report Settings")
     project_name = st.sidebar.text_input("Project / Client Name:", value="My Website Project")
+    project_url = st.sidebar.text_input("Project URL:", value="https://example.com")
     label_m1 = st.sidebar.text_input("Previous Month Label:", value=f"{detected_m1} Ranking")
     label_m2 = st.sidebar.text_input("Current Month Label:", value=f"{detected_m2} Ranking")
 
@@ -386,7 +393,7 @@ if file_m1 and file_m2:
         valid_curr = curr_num_filtered.dropna()
         avg_pos = round(valid_curr.mean(), 1) if not valid_curr.empty else "N/A"
 
-        st.subheader(f"📌 {project_name} - SEO Overview ({selected_engine})")
+        st.subheader(f"📌 {project_name} ({project_url}) - SEO Overview ({selected_engine})")
 
         r1_col1, r1_col2, r1_col3, r1_col4, r1_col5 = st.columns(5)
         r1_col1.metric("Total Keywords", len(filtered_df))
@@ -424,7 +431,7 @@ if file_m1 and file_m2:
         head_col1, head_col2 = st.columns([4, 1])
         head_col1.subheader("Keyword Comparison Data")
 
-        pdf_bytes = generate_pdf_report(filtered_df, project_name, selected_engine, label_m1, label_m2)
+        pdf_bytes = generate_pdf_report(filtered_df, project_name, project_url, selected_engine, label_m1, label_m2)
         head_col2.download_button(
             label="📥 Download PDF Report",
             data=pdf_bytes,
