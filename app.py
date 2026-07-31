@@ -8,9 +8,26 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
+# Page Configuration
 st.set_page_config(page_title="SE Ranking Comparison Tool", layout="wide")
-st.title("📊 SE Ranking Keyword & Ranking Comparison")
 
+# Injecting CSS for Theme-Adaptive Metric Card Colors
+st.markdown("""
+    <style>
+        /* Ensures metric containers adjust adaptively to both Light and Dark themes */
+        [data-testid="stMetricValue"] {
+            font-size: 1.6rem !important;
+        }
+        div[data-testid="stMetric"] {
+            border-radius: 8px;
+            padding: 10px 15px;
+            background-color: rgba(150, 150, 150, 0.1);
+            border: 1px solid rgba(150, 150, 150, 0.2);
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+st.title("📊 SE Ranking Keyword & Ranking Comparison")
 st.markdown("Upload two monthly SE Ranking PDF exports to compare **Keyword** vs **Ranking** data.")
 
 col1, col2 = st.columns(2)
@@ -118,7 +135,7 @@ def parse_se_ranking_tables(pdf_file):
 
 
 def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
-    """Generates downloadable PDF document using dashes for unranked/missing items."""
+    """Generates downloadable PDF document with high contrast styling."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -141,7 +158,17 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
         spaceAfter=10
     )
 
-    cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontSize=8, leading=10)
+    cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.black)
+    
+    # White text style for table headers in PDF
+    header_cell_style = ParagraphStyle(
+        'HeaderCell',
+        parent=styles['Normal'],
+        fontSize=8,
+        leading=10,
+        textColor=colors.white
+    )
+
     metric_label_style = ParagraphStyle('MetricLabel', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#9ca3af'), alignment=1)
     metric_val_style = ParagraphStyle('MetricVal', parent=styles['Normal'], fontSize=12, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
 
@@ -150,7 +177,7 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     story.append(Paragraph(f"Period: {label_m1} vs {label_m2}", subtitle_style))
     story.append(Spacer(1, 8))
 
-    # Calculate Overview Metrics safely with coerced numeric ranks
+    # Calculate Overview Metrics
     curr_numeric = pd.to_numeric(dataframe['Curr_Ranking'], errors='coerce')
 
     total_kw = len(dataframe)
@@ -222,11 +249,11 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     m2_header = f"{label_m2} Rank" if "Rank" not in label_m2 else label_m2
 
     table_data = [[
-        Paragraph("<b>Keyword</b>", cell_style),
-        Paragraph(f"<b>{m1_header}</b>", cell_style),
-        Paragraph(f"<b>{m2_header}</b>", cell_style),
-        Paragraph("<b>Shift</b>", cell_style),
-        Paragraph("<b>Status</b>", cell_style)
+        Paragraph("<b>Keyword</b>", header_cell_style),
+        Paragraph(f"<b>{m1_header}</b>", header_cell_style),
+        Paragraph(f"<b>{m2_header}</b>", header_cell_style),
+        Paragraph("<b>Shift</b>", header_cell_style),
+        Paragraph("<b>Status</b>", header_cell_style)
     ]]
 
     for _, row in dataframe.iterrows():
@@ -253,7 +280,7 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     pdf_table = Table(table_data, colWidths=[260, 70, 70, 50, 100], repeatRows=1)
     pdf_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1f2937')),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('ALIGN', (1, 0), (-1, -1), 'LEFT'),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
@@ -288,15 +315,12 @@ if file_m1 and file_m2:
 
         merged = pd.merge(m1_sub, m2_sub, on='Keyword', how='outer')
 
-        # Fill missing keyword occurrences with '-'
         merged['Prev_Ranking'] = merged['Prev_Ranking'].fillna("-")
         merged['Curr_Ranking'] = merged['Curr_Ranking'].fillna("-")
 
-        # Create numeric representations purely for calculation purposes
         prev_num = pd.to_numeric(merged['Prev_Ranking'], errors='coerce')
         curr_num = pd.to_numeric(merged['Curr_Ranking'], errors='coerce')
 
-        # Calculate position shifts dynamically
         def calc_shift(row):
             p = row['prev_num']
             c = row['curr_num']
@@ -360,12 +384,10 @@ if file_m1 and file_m2:
         status_filter = st.multiselect("Filter by Status:", merged['Status'].unique(), default=merged['Status'].unique())
         filtered_df = merged[merged['Status'].isin(status_filter)].copy()
         
-        # Format Position Shift display column with dashes for unranked items
         filtered_df['Position Shift Display'] = filtered_df['Position Shift'].apply(
             lambda x: "-" if pd.isna(x) or x == "" else (f"+{int(x)}" if int(x) > 0 else str(int(x)))
         )
 
-        # Sort values putting valid position shifts on top
         filtered_df['sort_helper'] = filtered_df['Position Shift'].fillna(-999)
         filtered_df = filtered_df.sort_values(by='sort_helper', ascending=False).drop(columns=['sort_helper'])
 
@@ -391,6 +413,7 @@ if file_m1 and file_m2:
             mime="application/pdf"
         )
 
+        # Outputting standard dataframe automatically handles light/dark theme contrast
         st.dataframe(display_df, use_container_width=True)
     else:
         st.error("Could not find table data in the uploaded PDFs. Please check that both files contain the Brief Rankings History table.")
