@@ -152,7 +152,6 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
 
     # Calculate Overview Metrics safely with coerced numeric ranks
     curr_numeric = pd.to_numeric(dataframe['Curr_Ranking'], errors='coerce')
-    prev_numeric = pd.to_numeric(dataframe['Prev_Ranking'], errors='coerce')
 
     total_kw = len(dataframe)
     top_1_3 = len(dataframe[(curr_numeric >= 1) & (curr_numeric <= 3)])
@@ -167,7 +166,7 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
     improved = len(dataframe[shifts > 0])
     dropped = len(dataframe[shifts < 0])
     new_kw = len(dataframe[dataframe['Status'].str.contains("New Keyword", na=False)])
-    dropped_out = len(dataframe[dataframe['Status'].str.contains("Dropped Out", na=False)])
+    kw_missing = len(dataframe[dataframe['Status'].str.contains("Keyword Missing", na=False)])
 
     # Metrics Summary Table
     metrics_data = [
@@ -191,7 +190,7 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
             Paragraph("Improved Positions", metric_label_style),
             Paragraph("Dropped Positions", metric_label_style),
             Paragraph("New Keywords", metric_label_style),
-            Paragraph("Dropped Out (>100)", metric_label_style),
+            Paragraph("Keyword Missing", metric_label_style),
             Paragraph("", metric_label_style),
             Paragraph("", metric_label_style)
         ],
@@ -199,7 +198,7 @@ def generate_pdf_report(dataframe, engine_name, label_m1, label_m2):
             Paragraph(str(improved), metric_val_style),
             Paragraph(str(dropped), metric_val_style),
             Paragraph(str(new_kw), metric_val_style),
-            Paragraph(str(dropped_out), metric_val_style),
+            Paragraph(str(kw_missing), metric_val_style),
             Paragraph("", metric_label_style),
             Paragraph("", metric_label_style)
         ]
@@ -315,7 +314,7 @@ if file_m1 and file_m2:
             if pd.isna(p) and pd.notna(c):
                 return "🆕 New Keyword"
             elif pd.notna(p) and pd.isna(c):
-                return "❌ Dropped Out (>100)"
+                return "❌ Keyword Missing"
             elif pd.notna(p) and pd.notna(c):
                 shift = p - c
                 if shift > 0:
@@ -354,7 +353,7 @@ if file_m1 and file_m2:
         r2_col1.metric("Improved Positions", len(merged[merged['Position Shift'] > 0]))
         r2_col2.metric("Dropped Positions", len(merged[merged['Position Shift'] < 0]))
         r2_col3.metric("New Keywords", len(merged[merged['Status'] == "🆕 New Keyword"]))
-        r2_col4.metric("Dropped Out (>100)", len(merged[merged['Status'] == "❌ Dropped Out (>100)"]))
+        r2_col4.metric("Keyword Missing", len(merged[merged['Status'] == "❌ Keyword Missing"]))
 
         st.markdown("---")
 
