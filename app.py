@@ -1,102 +1,115 @@
 import streamlit as st
 import pandas as pd
 import pdfplumber
+import re
 
 st.set_page_config(page_title="SE Ranking PDF Comparison Tool", layout="wide")
-st.title("📄 SE Ranking PDF Keyword Comparison")
+st.title("📊 SE Ranking Brief History PDF Comparison")
 
-st.markdown("Upload your monthly SE Ranking **PDF exports** below to compare position shifts.")
+st.markdown("Upload two monthly SE Ranking PDF reports (e.g., April vs. May) to compare keyword positions.")
 
 col1, col2 = st.columns(2)
 
 with col1:
-    file_m1 = st.file_uploader("Upload Previous Month PDF", type=["pdf"], key="m1")
+    file_m1 = st.file_uploader("Upload Month 1 PDF (e.g., April)", type=["pdf"], key="m1")
 with col2:
-    file_m2 = st.file_uploader("Upload Current Month PDF", type=["pdf"], key="m2")
+    file_m2 = st.file_uploader("Upload Month 2 PDF (e.g., May)", type=["pdf"], key="m2")
 
-def extract_table_from_pdf(pdf_file):
-    """Extracts tables across all pages in a PDF and merges them into one DataFrame."""
-    all_rows = []
-    with pdfplumber.open(pdf_file) as pdf:
-        for page in pdf.pages:
-            tables = page.extract_tables()
-            for table in tables:
-                for row in table:
-                    # Filter out empty rows or repeated headers
-                    if row and any(row):
-                        all_rows.append(row)
+def parse_se_ranking_pdf(pdf_file):
+    """Parses SE Ranking 'Brief Rankings History' tables from Page 3 onwards."""
+    extracted_data = []
+    current_engine = "Google USA" # Default fallback
     
-    if not all_rows:
-        return None
+    with pdfplumber.open(pdf_file) as pdf:
+        # Loop through pages starting from page 3 (index 2)
+        for page_num in range(2, len(pdf.pages)):
+            text_lines = pdf.pages[page_num].extract_text().split('\n')
+            
+            for line in text_lines:
+                # Detect Search Engine Section (e.g., Google USA vs Google Mobile)
+                if "Google" in line and "Austin" in line:
+                    if "Mobile" in line:
+                        current_engine = "Google Mobile"
+                    else:
+                        current_engine = "Google Desktop"
+                    continue
+                
+                # Regex match for SE Ranking row pattern: [Keyword Name] | [Results] | [Rank]
+                # Example line: "Body Contouring in Austin, TX | 150 | 48"
+                match = re.search(r'^(.*?)\s*\|\s*[\d\.\,\w]+\s*\|\s*(\d+)$', line.strip())
+                if match:
+                    keyword = match.group(1).strip()
+                    rank = int(match.group(2))
+                    
+                    # Ignore header/footer artifacts
+                    if keyword.lower() not in ['keyword', 'results', 'baseline', 'brief rankings history']:
+                        extracted_data.append({
+                            'Engine': current_engine,
+                            'Keyword': keyword,
+                            'Rank': rank
+                        })
 
-    # First row is treated as header
-    headers = [str(col).strip() if col else f"col_{i}" for i, col in enumerate(all_rows[0])]
-    df = pd.DataFrame(all_rows[1:], columns=headers)
+    if not extracted_data:
+        return None
+        
+    df = pd.DataFrame(extracted_data)
+    # Deduplicate in case a keyword is listed twice under same engine
+    df = df.drop_duplicates(subset=['Engine', 'Keyword'], keep='first')
     return df
 
 if file_m1 and file_m2:
-    with st.spinner("Extracting data from PDF files..."):
-        df_m1 = extract_table_from_pdf(file_m1)
-        df_m2 = extract_table_from_pdf(file_m2)
+    with st.spinner("Parsing PDFs from Page 3..."):
+        df_m1 = parse_se_ranking_pdf(file_m1)
+        df_m2 = parse_se_ranking_pdf(file_m2)
 
     if df_m1 is not None and df_m2 is not None:
-        st.write("### Detected Columns")
-        st.write("Previous Month Columns:", list(df_m1.columns))
-        st.write("Current Month Columns:", list(df_m2.columns))
+        # Select Search Engine View
+        engine_options = list(set(df_m1['Engine'].unique()).union(set(df_m2['Engine'].unique())))
+        selected_engine = st.selectbox("Select Device / Search Engine:", engine_options)
 
-        # Column selectors in case column names differ slightly in SE Ranking exports
-        c1, c2 = st.columns(2)
-        kw_col = c1.selectbox("Select Keyword Column", df_m1.columns, index=0)
-        
-        # Default to finding 'Rank' or 'Position' column
-        default_rank_idx = 1
-        for idx, col in enumerate(df_m1.columns):
-            if "rank" in col.lower() or "pos" in col.lower():
-                default_rank_idx = idx
-                break
-                
-        rank_col = c2.selectbox("Select Rank Column", df_m1.columns, index=default_rank_idx)
+        # Filter by selected search engine
+        m1_sub = df_m1[df_m1['Engine'] == selected_engine][['Keyword', 'Rank']].rename(columns={'Rank': 'Prev_Rank'})
+        m2_sub = df_m2[df_m2['Engine'] == selected_engine][['Keyword', 'Rank']].rename(columns={'Rank': 'Curr_Rank'})
 
-        # Prepare subsets
-        m1_sub = df_m1[[kw_col, rank_col]].copy().rename(columns={rank_col: 'Prev_Rank'})
-        m2_sub = df_m2[[kw_col, rank_col]].copy().rename(columns={rank_col: 'Curr_Rank'})
+        # Merge datasets on Keyword
+        merged = pd.merge(m1_sub, m2_sub, on='Keyword', how='outer')
 
-        # Clean numeric rank columns
-        m1_sub['Prev_Rank'] = pd.to_numeric(m1_sub['Prev_Rank'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(100)
-        m2_sub['Curr_Rank'] = pd.to_numeric(m2_sub['Curr_Rank'].astype(str).str.extract(r'(\d+)')[0], errors='coerce').fillna(100)
+        # Fill missing rankings (if keyword dropped off top 100)
+        merged['Prev_Rank'] = merged['Prev_Rank'].fillna(100).astype(int)
+        merged['Curr_Rank'] = merged['Curr_Rank'].fillna(100).astype(int)
 
-        # Merge datasets
-        merged = pd.merge(m1_sub, m2_sub, on=kw_col, how='outer')
-
-        # Calculate Rank Position Change
-        merged['Change'] = merged['Prev_Rank'] - merged['Curr_Rank']
+        # Rank movement (Positive = rank improved)
+        merged['Position Shift'] = merged['Prev_Rank'] - merged['Curr_Rank']
 
         def get_status(row):
             if row['Prev_Rank'] == 100 and row['Curr_Rank'] < 100:
                 return "🆕 New Keyword"
             elif row['Prev_Rank'] < 100 and row['Curr_Rank'] == 100:
-                return "❌ Lost Keyword"
-            elif row['Change'] > 0:
+                return "❌ Dropped Out (>100)"
+            elif row['Position Shift'] > 0:
                 return "🟢 Improved"
-            elif row['Change'] < 0:
+            elif row['Position Shift'] < 0:
                 return "🔴 Dropped"
             else:
                 return "⚪ No Change"
 
         merged['Status'] = merged.apply(get_status, axis=1)
 
-        # Summary Metrics
-        st.subheader("Comparison Summary")
+        # Summary Statistics
+        st.subheader(f"Summary for {selected_engine}")
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Total Keywords", len(merged))
-        m2.metric("Improved Ranks", len(merged[merged['Change'] > 0]))
-        m3.metric("Dropped Ranks", len(merged[merged['Change'] < 0]))
-        m4.metric("New Keywords", len(merged[merged['Status'] == "🆕 New Keyword"]))
+        m2.metric("Improved Positions", len(merged[merged['Position Shift'] > 0]))
+        m3.metric("Dropped Positions", len(merged[merged['Position Shift'] < 0]))
+        m4.metric("New Rankings", len(merged[merged['Status'] == "🆕 New Keyword"]))
 
-        # Filter & Data Table
-        status_filter = st.multiselect("Filter Status:", merged['Status'].unique(), default=merged['Status'].unique())
+        # Filtering & Output
+        status_filter = st.multiselect("Filter by Status:", merged['Status'].unique(), default=merged['Status'].unique())
         filtered_df = merged[merged['Status'].isin(status_filter)]
 
-        st.dataframe(filtered_df.sort_values(by='Change', ascending=False), use_container_width=True)
+        st.dataframe(
+            filtered_df.sort_values(by='Position Shift', ascending=False),
+            use_container_width=True
+        )
     else:
-        st.error("Could not extract tables from one or both PDF files. Ensure the PDF contains recognizable tables.")
+        st.error("Could not parse keyword data from the uploaded PDFs. Please make sure the PDF has the 'Brief Rankings History' format on page 3 onwards.")
