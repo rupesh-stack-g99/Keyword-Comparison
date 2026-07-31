@@ -3,11 +3,19 @@ import pandas as pd
 import pdfplumber
 import io
 import re
+import os
+import requests
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
+from svglib.svglib import svg2rlg
+
+# ----------------------------------------------------
+# 📌 CONFIGURATION: Growth99 Fixed SVG Logo URL
+# ----------------------------------------------------
+FIXED_LOGO_PATH = "https://growth99.com/storage/2024/09/LOGO.svg"
 
 # Page Configuration
 st.set_page_config(page_title="SE Ranking Comparison Tool", layout="wide")
@@ -145,8 +153,43 @@ def parse_se_ranking_tables(pdf_file):
     return df
 
 
+def get_fixed_logo_image():
+    """Loads and converts the SVG logo from URL or local path for ReportLab compatibility."""
+    try:
+        if FIXED_LOGO_PATH.lower().endswith('.svg'):
+            if FIXED_LOGO_PATH.startswith("http://") or FIXED_LOGO_PATH.startswith("https://"):
+                response = requests.get(FIXED_LOGO_PATH)
+                if response.status_code == 200:
+                    svg_data = io.BytesIO(response.content)
+                    drawing = svg2rlg(svg_data)
+            elif os.path.exists(FIXED_LOGO_PATH):
+                drawing = svg2rlg(FIXED_LOGO_PATH)
+            
+            if drawing:
+                # Scale drawing proportionally to fit header dimensions (130x40)
+                target_width = 130
+                scale_factor = target_width / float(drawing.width)
+                drawing.width *= scale_factor
+                drawing.height *= scale_factor
+                drawing.scale(scale_factor, scale_factor)
+                return drawing
+
+        # Standard Raster Formats (PNG, JPG)
+        elif FIXED_LOGO_PATH.startswith("http://") or FIXED_LOGO_PATH.startswith("https://"):
+            response = requests.get(FIXED_LOGO_PATH)
+            if response.status_code == 200:
+                img_data = io.BytesIO(response.content)
+                return Image(img_data, width=130, height=40)
+        elif os.path.exists(FIXED_LOGO_PATH):
+            return Image(FIXED_LOGO_PATH, width=130, height=40)
+
+    except Exception as e:
+        st.warning(f"Could not load logo: {e}")
+    return ""
+
+
 def generate_pdf_report(dataframe, project_name, project_url, engine_name, label_m1, label_m2):
-    """Generates downloadable PDF document with project name, project url, plain status text, and updated metrics."""
+    """Generates downloadable PDF document with project details, fixed Growth99 SVG logo, and ranking metrics."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -159,20 +202,24 @@ def generate_pdf_report(dataframe, project_name, project_url, engine_name, label
     story = []
 
     styles = getSampleStyleSheet()
-    title_style = styles['Heading1']
+    title_style = ParagraphStyle(
+        'ReportTitle',
+        parent=styles['Heading1'],
+        fontSize=18,
+        leading=22,
+        spaceAfter=6
+    )
 
     subtitle_style = ParagraphStyle(
         'ReportSubtitle',
         parent=styles['Normal'],
-        fontSize=10,
-        leading=14,
-        textColor=colors.HexColor('#4b5563'),
-        spaceAfter=10
+        fontSize=9,
+        leading=13,
+        textColor=colors.HexColor('#4b5563')
     )
 
     cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontSize=8, leading=10, textColor=colors.black)
     
-    # Header cell style explicitly set to white text
     header_cell_style = ParagraphStyle(
         'HeaderCell',
         parent=styles['Normal'],
@@ -184,15 +231,36 @@ def generate_pdf_report(dataframe, project_name, project_url, engine_name, label
     metric_label_style = ParagraphStyle('MetricLabel', parent=styles['Normal'], fontSize=8, textColor=colors.HexColor('#9ca3af'), alignment=1)
     metric_val_style = ParagraphStyle('MetricVal', parent=styles['Normal'], fontSize=12, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
 
-    # Title & Subtitle with Project Name, Project URL, and Period
-    story.append(Paragraph(f"Keyword Ranking Comparison Report - {engine_name}", title_style))
-    story.append(Paragraph(
+    # Header Construction: Title/Subtitle on Left, Fixed SVG Logo on Right
+    title_text = f"Keyword Ranking Comparison Report - {engine_name}"
+    subtitle_text = (
         f"<b>Project Name:</b> {project_name}<br/>"
         f"<b>Project URL:</b> {project_url}<br/>"
-        f"<b>Period:</b> {label_m1} vs {label_m2}", 
-        subtitle_style
-    ))
-    story.append(Spacer(1, 8))
+        f"<b>Period:</b> {label_m1} vs {label_m2}"
+    )
+
+    left_header_flowables = [
+        Paragraph(title_text, title_style),
+        Paragraph(subtitle_text, subtitle_style)
+    ]
+
+    logo_img = get_fixed_logo_image()
+    if hasattr(logo_img, 'hAlign'):
+        logo_img.hAlign = 'RIGHT'
+
+    header_table_data = [[left_header_flowables, logo_img]]
+    header_table = Table(header_table_data, colWidths=[412, 160])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+    ]))
+
+    story.append(header_table)
+    story.append(Spacer(1, 12))
 
     # Calculate Overview Metrics
     curr_numeric = pd.to_numeric(dataframe['Curr_Ranking'], errors='coerce')
@@ -269,7 +337,6 @@ def generate_pdf_report(dataframe, project_name, project_url, engine_name, label
     ]]
 
     for _, row in dataframe.iterrows():
-        # Plain clean text status without emoji or symbols
         clean_status = str(row['Status']).replace("🆕 ", "").replace("❌ ", "").replace("🟢 ", "").replace("🔴 ", "").replace("⚪ ", "")
         
         shift_val = row['Position Shift']
@@ -376,7 +443,6 @@ if file_m1 and file_m2:
             status_filter = st.multiselect("Filter by Status:", merged['Status'].unique(), default=merged['Status'].unique())
 
         with filter_col2:
-            # Multi-select dropdown to select keywords to remove
             keywords_to_remove = st.multiselect("🗑️ Select Keywords to Remove/Delete:", merged['Keyword'].unique())
 
         # Apply Filters (Status + Keyword Removal)
@@ -432,7 +498,7 @@ if file_m1 and file_m2:
         head_col1, head_col2 = st.columns([4, 1])
         head_col1.subheader("Keyword Comparison Data")
 
-        # Constructing dynamic, clean file name elements
+        # Dynamic File Name
         clean_project = re.sub(r'[^\w\s-]', '', project_name).strip().replace(' ', '_')
         clean_m1 = re.sub(r'[^\w\s-]', '', label_m1).strip().replace(' ', '_')
         clean_m2 = re.sub(r'[^\w\s-]', '', label_m2).strip().replace(' ', '_')
@@ -441,7 +507,15 @@ if file_m1 and file_m2:
 
         dynamic_filename = f"{clean_project}_{clean_m1}_vs_{clean_m2}_{clean_engine}_{current_date}.pdf"
 
-        pdf_bytes = generate_pdf_report(filtered_df, project_name, project_url, selected_engine, label_m1, label_m2)
+        # Generate PDF
+        pdf_bytes = generate_pdf_report(
+            filtered_df, 
+            project_name, 
+            project_url, 
+            selected_engine, 
+            label_m1, 
+            label_m2
+        )
         
         head_col2.download_button(
             label="📥 Download PDF Report",
